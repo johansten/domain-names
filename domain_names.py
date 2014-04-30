@@ -48,9 +48,9 @@ def conditional(pmf, condition):
 
 class Markov:
 
-	# 	n = 5 # this is the "n" in n-grams, try adjusting this for different results
-	#	transitions = {} # keys are n-grams, values are dicts mapping subsequent n-grams to probabilities
-	#	prefix_frequencies = {} # prefixes are n-grams that appear at the beginning of words
+	n = 5 # this is the "n" in n-grams, try adjusting this for different results
+	transitions = {} # keys are n-grams, values are dicts mapping subsequent n-grams to probabilities
+	prefix_frequencies = {} # prefixes are n-grams that appear at the beginning of words
 
 	@classmethod
 	def unpickle(cls, filename):
@@ -166,23 +166,19 @@ class ConnHandler:
 
 	def __init__(self, num_connections):
 
-		self.read_list  = []
-		self.write_list = []
+		self.r_list  = []
+		self.w_list = []
 
 		for n in xrange(num_connections):
 			c = Connection(self)
-			self.write_list.append(c)
+			self.w_list.append(c)
 
 	def run(self):
 
 		while True:
-
-			ready = select.select(self.read_list, self.write_list, [])
-			for c in ready[0]:
-				c.read(self)
-
-			for c in ready[1]:
-				c.write(self)
+			ready = select.select(self.r_list, self.w_list, [])
+			for c in ready[0] + ready[1]:
+				c.run(self)
 
 
 class Connection:
@@ -199,6 +195,12 @@ class Connection:
 	def __init__(self, handler):
 		self.init(handler)
 
+	def run(self, handler):
+		self.state(handler)
+
+	def fileno(self):
+		return self.socket.fileno()
+
 	def init(self, handler):
 
 		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -212,33 +214,32 @@ class Connection:
 
 		self.domain = get_domain_candidate()
 		self.socket = s
-
-	def fileno(self):
-		return self.socket.fileno()
+		self.state = self.write
 
 	def write(self, handler):
 		self.socket.send(self.domain + "\r\n")
-		self.read1 = True
+		self.state = self.read1
 
-		handler.write_list.remove(self)
-		handler.read_list.append(self)
+		handler.w_list.remove(self)
+		handler.r_list.append(self)
 
-	def read(self, handler):
+	def read1(self, handler):
 
-		if self.read1:
-			self.socket.recv(189)
-			self.read1 = False
+		self.socket.recv(189)
+		self.state = self.read2
 
-		else:
-			data = self.socket.recv(16)
-			if data.startswith('\nNo match for "'):
-				print self.domain
+	def read2(self, handler):
 
-			self.socket.close()
-			self.init(handler)
+		data = self.socket.recv(16)
+		if data.startswith('\nNo match for "'):
+			print self.domain
 
-			handler.read_list.remove(self)
-			handler.write_list.append(self)
+		self.socket.close()
+		self.init(handler)
+
+		handler.r_list.remove(self)
+		handler.w_list.append(self)
+
 
 def main():
 
